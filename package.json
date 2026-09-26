@@ -1,6 +1,6 @@
 {
   "name": "bus-approach-ar",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "公共交通オープンデータチャレンジ2026 — バス接近AR（Even G2）",
   "scripts": {
     "board": "tsx scripts/board-cli.ts",

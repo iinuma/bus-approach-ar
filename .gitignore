@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+data/raw/
+*.ehpk
+.DS_Store
+scratch/
+cdk.out/
+.env.production.local
+data/stops/

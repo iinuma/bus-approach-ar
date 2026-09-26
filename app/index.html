@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>バス接近AR</title>
+    <style>
+      body { background: #111; color: #9f9; font: 13px/1.4 ui-monospace, Menlo, monospace; margin: 12px; }
+      #preview { image-rendering: pixelated; width: 100%; max-width: 1152px; background: #000; display: block; }
+      #screen { white-space: pre-wrap; }
+      .keys button { font: inherit; margin: 4px 4px 4px 0; padding: 6px 10px; }
+    </style>
+  </head>
+  <body>
+    <canvas id="preview" width="576" height="288"></canvas>
+    <div class="keys">
+      <button data-key="prev">↑ swipe（左へ回す／前へ）</button>
+      <button data-key="next">↓ swipe（右へ回す／次へ）</button>
+      <button data-key="tap">tap</button>
+      <button data-key="dtap">double tap</button>
+      <button data-key="platform">乗り場を選び直す</button>
+      <button data-key="reset">向きを右60°に戻す</button>
+      <button data-key="about">データについて</button>
+      <button data-key="diag">診断</button>
+    </div>
+    <pre id="screen">起動中…</pre>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

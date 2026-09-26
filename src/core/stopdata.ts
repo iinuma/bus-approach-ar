@@ -24,6 +24,8 @@ export interface Platform {
   id: string;
   /** 乗り場番号（GTFS の platform_code）。 */
   code: string;
+  /** 複数の事業者をまとめた停留所のとき、この乗り場の事業者（「臨港」「市バス」）。 */
+  operator?: string;
   lat: number;
   lng: number;
 }

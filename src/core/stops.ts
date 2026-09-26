@@ -18,7 +18,10 @@ export interface PlatformChoice {
 
 export function platformChoices(data: StopData): PlatformChoice[] {
   // 発車の無い標柱（降車専用）は、乗る人が選ぶ意味がないので出さない。
-  const boarding = data.platforms.filter((p) => data.departures.some((d) => d.platform === p.id));
+  // 事業者 → 乗り場番号（数の順）で並べる。川崎駅は臨港 16 + 市バス 9 の乗り場がある。
+  const boarding = data.platforms
+    .filter((p) => data.departures.some((d) => d.platform === p.id))
+    .sort((a, b) => (a.operator ?? '').localeCompare(b.operator ?? '') || (Number(a.code) || 999) - (Number(b.code) || 999) || a.id.localeCompare(b.id));
   const choices: PlatformChoice[] = boarding.map((p) => {
     // 系統ごとに最頻の行先を出す（同じ系統で行先が 1 つとは限らない）。
     const byRoute = new Map<string, Map<string, number>>();
@@ -33,7 +36,8 @@ export function platformChoices(data: StopData): PlatformChoice[] {
       return `${route} ${headsign}`;
     });
     // 川崎市バスは platform_code が空（乗り場番号がデータに無い）。そのときは系統・行先だけで示す。
-    const prefix = p.code ? `${p.code}番 ` : '';
+    // 複数の事業者をまとめたバス停では、どちらの乗り場かを先頭に出す。
+    const prefix = `${p.operator ? `${p.operator} ` : ''}${p.code ? `${p.code}番 ` : ''}`;
     return { id: p.id, label: `${prefix}${parts.join(' / ')}`, platforms: new Set([p.id]) };
   });
   if (choices.length > 1) choices.push({ id: 'all', label: '全乗り場', platforms: new Set(boarding.map((p) => p.id)) });

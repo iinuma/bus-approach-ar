@@ -7,12 +7,15 @@
 //
 // 時刻表そのものなので公開リポジトリには入れない（.gitignore、README の「公開リポジトリに入れないもの」）。
 import { mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { groupStops, type GroupCandidate } from '../src/core/grouping.js';
+import { operatorOf } from '../src/core/merge.js';
 import type { StopIndex } from '../src/core/stopindex.js';
 import { buildStop, loadFeed, norm } from './lib/gtfs.js';
 
 const feeds = process.argv.slice(2).length ? process.argv.slice(2) : ['kawasaki_city', 'rinko'];
 const index: StopIndex = { builtAt: new Date().toISOString(), sources: {}, stops: [] };
 const sizes: { key: string; name: string; kb: number }[] = [];
+const candidates: (GroupCandidate & { routes: string[] })[] = [];
 
 for (const name of feeds) {
   const started = performance.now();
@@ -33,21 +36,36 @@ for (const name of feeds) {
     const kb = statSync(path).size / 1024;
     sizes.push({ key: `${name}:${parentId}`, name: data.stop.name, kb });
     // 索引には選ぶのに要るものだけ（名前・座標・系統）。便は入れない。
-    const routes = [...new Set(data.departures.map((d) => d.route))].sort();
-    index.stops.push({
+    candidates.push({
       key: `${name}:${parentId}`,
       feed: name,
-      id: parentId,
       name: norm(data.stop.name),
       lat: data.stop.lat,
       lng: data.stop.lng,
-      routes,
+      departures: data.departures.length,
+      routes: [...new Set(data.departures.map((d) => d.route))].sort(),
     });
     count += 1;
   }
   console.log(`${name}: ${count} 停留所（便なし ${skipped} を除外） ${Math.round(performance.now() - started)}ms`);
 }
 
+// 事業者をまたいで同じバス停をまとめる（src/core/grouping.ts）。
+const routesOf = new Map(candidates.map((c) => [c.key, c.routes]));
+const groups = groupStops(candidates);
+for (const g of groups) {
+  index.stops.push({
+    key: g.members.map((m) => m.key).join('+'),
+    name: g.name,
+    lat: Number(g.lat.toFixed(6)),
+    lng: Number(g.lng.toFixed(6)),
+    operators: g.members.map((m) => operatorOf(m.feed)),
+    routes: [...new Set(g.members.flatMap((m) => routesOf.get(m.key) ?? []))].sort(),
+  });
+}
+const merged = groups.filter((g) => g.members.length > 1);
+console.log(`まとめたバス停 ${merged.length}（${candidates.length} 停留所 → ${groups.length} バス停）`);
+console.log('  例:', merged.filter((g) => new Set(g.members.map((m) => m.name)).size > 1).map((g) => g.members.map((m) => m.name).join('＝')).join(', '));
 writeFileSync('data/stops/index.json', JSON.stringify(index));
 sizes.sort((a, b) => b.kb - a.kb);
 const total = sizes.reduce((n, s) => n + s.kb, 0);

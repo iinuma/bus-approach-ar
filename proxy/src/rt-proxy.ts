@@ -3,6 +3,8 @@
  *
  *   GET /stop?key=rinko:5010   停留所の時刻表（その日に走る便だけ, gzip）
  *   GET /rt?key=rinko:5010     その停留所に関係する便の車両位置・予測
+ *   key は事業者をまたいでまとめたバス停なら + でつなぐ（kawasaki_city:94+rinko:10）。
+ *   各社のぶんを取ってまとめ、ID に事業者の名前空間を付けて返す（src/core/merge.ts）。
  *   GET /?feed=rinko           0.1.0（大師橋駅前だけのベータ）との互換。大師橋駅前の便だけ返す
  *
  * 役目は Tokyojihatsu の中継と同じ:
@@ -19,6 +21,7 @@
 
 import { gzipSync } from 'node:zlib';
 
+import { mergeSnapshots, mergeStops, splitGroupKey } from '../../src/core/merge.js';
 import type { RtSnapshot } from '../../src/core/realtime.js';
 import { sliceForDay } from '../../src/core/service.js';
 import type { StopData } from '../../src/core/stopdata.js';
@@ -31,6 +34,8 @@ const RT_CACHE_MS = 15_000;
 /** 0.1.0 のベータが見ている停留所。 */
 const LEGACY_STOP = 'rinko:5010';
 const KEY_PATTERN = /^([a-z_]+):([A-Za-z0-9_-]{1,32})$/;
+/** まとめたバス停のメンバー数の上限（川崎の 2 社なら 2 で足りる）。 */
+const MAX_MEMBERS = 4;
 
 export interface RtProxyRequest {
   method: string;
@@ -72,6 +77,14 @@ export function parseStopKey(key: string | undefined): { feed: FeedName; id: str
   const m = key ? KEY_PATTERN.exec(key) : null;
   if (!m || !(m[1]! in FEEDS)) return null;
   return { feed: m[1] as FeedName, id: m[2]! };
+}
+
+/** まとめたバス停の鍵をメンバーに分ける。1 つでも不正なら null。 */
+export function parseGroupKey(key: string | undefined): { feed: FeedName; id: string }[] | null {
+  const members = key ? splitGroupKey(key) : [];
+  if (members.length === 0 || members.length > MAX_MEMBERS) return null;
+  const parsed = members.map(parseStopKey);
+  return parsed.every((m) => m !== null) ? (parsed as { feed: FeedName; id: string }[]) : null;
 }
 
 export function createRtProxy(options: RtProxyOptions) {
@@ -127,13 +140,16 @@ export function createRtProxy(options: RtProxyOptions) {
     const route = request.path.replace(/\/+$/, '');
     try {
       if (route === '/stop' || route === '/rt') {
-        const key = parseStopKey(request.query.key);
-        if (!key) return reply(400, 'bad key');
-        const full = await options.loadStop(key.feed, key.id);
-        if (!full) return reply(404, 'unknown stop');
-        const stop = sliceForDay(full, now());
-        if (route === '/stop') return json(stop, request);
-        return json(filterFor(await snapshotOf(key.feed), stop), request);
+        const members = parseGroupKey(request.query.key);
+        if (!members) return reply(400, 'bad key');
+        const loaded = await Promise.all(members.map((m) => options.loadStop(m.feed, m.id)));
+        if (loaded.some((d) => d === null)) return reply(404, 'unknown stop');
+        const parts = loaded.map((d) => sliceForDay(d!, now()));
+        if (route === '/stop') return json(mergeStops(parts), request);
+        const snapshots = await Promise.all(
+          members.map(async (m, i) => ({ feed: m.feed, snapshot: filterFor(await snapshotOf(m.feed), parts[i]!) })),
+        );
+        return json(mergeSnapshots(snapshots), request);
       }
 
       // 0.1.0 との互換: /?feed=rinko

@@ -114,14 +114,22 @@ export function inboundBuses(data: StopData, snapshot: RtSnapshot, nowMs: number
     { day: today, ids: activeServices(data, today) },
     { day: yesterday, ids: activeServices(data, yesterday) },
   ];
-  const arrivalsByTrip = new Map(data.arrivals.map((a) => [a.trip, a]));
+  // 循環系統は同じ停留所を 2 回通る（川崎駅前を出て戻ってくる）。便ごとに到着を並べておき、
+  // 車両より先にある次の到着を使う。
+  const arrivalsByTrip = new Map<string, Arrival[]>();
+  for (const a of data.arrivals) {
+    const list = arrivalsByTrip.get(a.trip) ?? [];
+    list.push(a);
+    arrivalsByTrip.set(a.trip, list);
+  }
   const out: InboundBus[] = [];
   for (const vehicle of snapshot.vehicles) {
-    const arrival = arrivalsByTrip.get(vehicle.trip);
-    if (!arrival) continue;
+    const arrival = (arrivalsByTrip.get(vehicle.trip) ?? [])
+      .filter((a) => vehicle.seq === null || a.seq >= vehicle.seq)
+      .sort((a, b) => a.seq - b.seq)[0];
+    if (!arrival) continue; // もう通り過ぎた
     const day = services.find((s) => s.ids.has(arrival.service))?.day;
     if (!day) continue;
-    if (vehicle.seq !== null && vehicle.seq > arrival.seq) continue; // もう通り過ぎた
     const bus = positionOnPath(data.paths[arrival.path]!, arrival, vehicle);
     const here = updateByTrip.get(vehicle.trip)?.stops.find((st) => st.stopId === arrival.platform);
     const scheduledMs = day.midnightMs + arrival.t * 1000;

@@ -184,7 +184,7 @@ function countdownText(e: BoardEntry, nowMs: number): string {
 /** 帯の中のラベル。選んでいる便は系統と残り時間、他は系統だけ。 */
 function labelLines(e: BoardEntry, focus: boolean): string[] {
   const route = e.scheduled.dep.route;
-  if (!focus) return [e.bus?.waiting ? `${route} 待機` : route];
+  if (!focus) return [e.bus?.waiting ? `${route} ${e.basis === 'inbound' ? '到着' : '待機'}` : route];
   return [`${route} ${formatCountdown(e.expectedMs - Date.now())}`];
 }
 
@@ -206,11 +206,20 @@ function mainText(): string {
   if (!e) return [`${stop.stop.name} ${choice.label}`, '3時間以内の発車はありません', `${status} ${look}`].join('\n');
   const d = e.scheduled.dep;
   const next = board[focusIndex + 1];
+  // 複数の乗り場を見ているときは、どの乗り場から出るかを先頭に出す（川崎駅は 25 乗り場）。
+  const where = choice.platforms.size > 1 ? `${platformName(d.platform)} ` : '';
   return [
-    `▶${d.route} ${d.headsign} ${clock(e.scheduled.atMs)}発`,
+    `▶${where}${d.route} ${d.headsign} ${clock(e.scheduled.atMs)}発`,
     `${countdownText(e, nowMs)} ${busText(e)}`,
     `${focusIndex + 1}/${board.length}${next ? ` 次${clock(next.scheduled.atMs)}${next.scheduled.dep.route}` : ''} ${status} ${look}`,
   ].join('\n');
+}
+
+/** 「臨港1番」「市バス」「3番」。 */
+function platformName(platformId: string): string {
+  const p = stop?.platforms.find((x) => x.id === platformId);
+  if (!p) return '';
+  return `${p.operator ?? ''}${p.code ? `${p.code}番` : ''}` || '乗り場';
 }
 
 function listText(title: string, items: string[]): string {
@@ -225,7 +234,7 @@ function nearby() {
 }
 
 function stopItems(): string[] {
-  return nearby().map(({ entry, distanceM }) => `${entry.name} ${formatMeters(distanceM)} ${entry.routes.slice(0, 3).join(' ')}`);
+  return nearby().map(({ entry, distanceM }) => `${entry.name} ${formatMeters(distanceM)} ${entry.operators.join('・')} ${entry.routes.slice(0, 2).join(' ')}`);
 }
 
 function aboutText(): string {
@@ -558,9 +567,10 @@ function wireBrowserControls(): void {
 async function resume(): Promise<boolean> {
   const saved = await loadSelection(host);
   if (!saved) return false;
-  // 0.1.0 は停留所 ID だけ（大師橋駅前の '5010'）を保存していた。
+  // 0.1.0 は停留所 ID だけ（大師橋駅前の '5010'）を保存していた。事業者をまとめる前の
+  // 単独の鍵（'rinko:10'）なら、それを含むまとめたバス停で再開する。
   const key = saved.stopId.includes(':') ? saved.stopId : `rinko:${saved.stopId}`;
-  const entry = INDEX.stops.find((s) => s.key === key);
+  const entry = INDEX.stops.find((s) => s.key === key) ?? INDEX.stops.find((s) => s.key.split('+').includes(key));
   if (!entry) return false;
   stopEntry = entry;
   lookRightDeg = saved.lookRightDeg;

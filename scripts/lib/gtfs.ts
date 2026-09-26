@@ -148,7 +148,9 @@ export function buildStop(feed: Feed, parentId: string): StopData {
       }
       if (i > 0) {
         const before = list.slice(Math.max(0, i - PATH_STOPS), i + 1);
-        const key = before.map((b) => b.stop_id).join('>');
+        // 停車順も鍵に入れる。停留所の並びが同じでも便によって停車順の番号が違い、
+        // 共有すると車両の停車順と経路が合わなくなる（2026-09-27 川崎駅前で発見）。
+        const key = before.map((b) => `${b.stop_id}@${b.stop_sequence}`).join('>');
         let index = pathIndex.get(key);
         if (index === undefined) {
           index = paths.length;

@@ -8,13 +8,16 @@
 import type { StopData } from './stopdata.js';
 
 export interface StopIndexEntry {
-  /** 「rinko:5010」。中継に停留所を頼むときの鍵。 */
+  /**
+   * 中継に停留所を頼むときの鍵。1 社なら「rinko:5010」、複数の事業者をまとめた停留所は
+   * メンバーを + でつなぐ（「kawasaki_city:94+rinko:10」, merge.ts）。
+   */
   key: string;
-  feed: string;
-  id: string;
   name: string;
   lat: number;
   lng: number;
+  /** 事業者の短い名前（「市バス」「臨港」）。 */
+  operators: string[];
   /** この停留所から出る系統（「大01」「川04」）。 */
   routes: string[];
 }

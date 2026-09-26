@@ -10,7 +10,7 @@ import type { StopData } from '../src/core/stopdata.js';
 import { platformChoices } from '../src/core/stops.js';
 import { fitText, INFO_MAX_LINES } from '../src/core/textfit.js';
 
-const data = JSON.parse(readFileSync('data/stops/daishibashi.json', 'utf8')) as StopData;
+const data = JSON.parse(readFileSync('data/stops/rinko/5010.json', 'utf8')) as StopData;
 const jst = (s: string) => new Date(`${s}+09:00`).getTime();
 
 test('運行日: 平日・土曜・日曜と、祝日の入れ替え（calendar_dates）', () => {

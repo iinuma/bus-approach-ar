@@ -41,11 +41,12 @@ import { formatAge, formatCountdown, formatMeters } from '../../src/core/format.
 import type { LatLng } from '../../src/core/geodesy.js';
 import type { RtSnapshot } from '../../src/core/realtime.js';
 import { renderApproach, splitHalves } from '../../src/core/render.js';
-import { clock } from '../../src/core/service.js';
+import { clock, jstDay } from '../../src/core/service.js';
 import type { StopData } from '../../src/core/stopdata.js';
+import type { StopIndex, StopIndexEntry } from '../../src/core/stopindex.js';
 import { nearbyStops, platformChoices, type PlatformChoice } from '../../src/core/stops.js';
 import { fitText, FULL_MAX_LINES, INFO_MAX_LINES } from '../../src/core/textfit.js';
-import daishibashi from '../../data/stops/daishibashi.json';
+import stopIndex from '../../data/stops/index.json';
 import { FrameSender } from './display.js';
 import { isClick, isDoubleClick, isScrollDown, isScrollUp } from './events.js';
 import { loadSelection, saveSelection, type HostStorage } from './selection.js';
@@ -60,10 +61,15 @@ const FULL = { id: 3, name: 'info', x: 0, y: 0, width: 576, height: 288 };
 
 const MENU = { platform: 1, stop: 2, reset: 3, step: 4, fov: 5, refresh: 6, about: 7, diag: 8, exit: 9 } as const;
 
-/** 収録している停留所。今は実証の 1 か所だけ。 */
-const STOPS: StopData[] = [daishibashi as StopData];
-/** 臨港バスのフィード。川崎市バスの停留所を入れたら停留所ごとに持たせる。 */
-const FEED = 'rinko';
+/**
+ * 停留所の一覧（川崎市バス・臨港バスの全停留所, scripts/build-all.ts）。同梱するのはこれだけで、
+ * 時刻表は選んだ停留所のぶんを中継から取る（全停留所だと数百 MB になり .ehpk に入らない）。
+ */
+const INDEX = stopIndex as StopIndex;
+/** 位置が取れないとき（ブラウザ・シミュレータ）の仮の現在地: 川崎駅東口。 */
+const FALLBACK_LOCATION: LatLng = { lat: 35.5305, lng: 139.6985 };
+/** バス停の一覧に出す数（近い順）。 */
+const NEARBY_LIMIT = 20;
 
 /** ODPT ガイドライン 3.1 の必須表示（開発者の問い合わせ先）。 */
 const CONTACT = 'async.sync+kawasakibus@gmail.com';
@@ -73,8 +79,9 @@ const AR_FOVS = [30, 45, 20] as const;
 const STEPS = [5, 2, 10] as const;
 /** 取得間隔。フィードの更新は 20〜60 秒ごと、車両位置は 20〜130 秒前のもの（実測）。 */
 const POLL_MS = 20_000;
-const RT_BASE: string = import.meta.env.VITE_RT_PROXY ?? (import.meta.env.DEV ? '/api/rt' : '');
-const RT_KEY: string = import.meta.env.VITE_RT_PROXY_KEY ?? '';
+/** 中継。dev サーバーは自分が中継を兼ねる（/api/stop, /api/rt）。常用ビルドは .env.production.local で渡す。 */
+const API_BASE: string = import.meta.env.VITE_RT_PROXY ?? (import.meta.env.DEV ? '/api' : '');
+const API_KEY: string = import.meta.env.VITE_RT_PROXY_KEY ?? '';
 
 /* ---------- 状態 ---------- */
 
@@ -85,7 +92,12 @@ type Page = 'stops' | 'platforms' | 'main' | 'about' | 'diag';
 let page: Page = 'stops';
 
 let location: LatLng | null = null;
+/** 選んだ停留所（索引）と、その時刻表（中継から取る。取るまでは null）。 */
+let stopEntry: StopIndexEntry | null = null;
 let stop: StopData | null = null;
+let stopError: string | null = null;
+/** 時刻表はその日に走る便だけなので、日付が変わったら取り直す。 */
+let stopDay = '';
 let choice: PlatformChoice | null = null;
 let cursor = 0;
 
@@ -107,17 +119,40 @@ let renderMs = 0;
 /* ---------- データ ---------- */
 
 async function poll(force = false): Promise<void> {
-  if (!RT_BASE || !stop) return;
+  if (!API_BASE || !stopEntry) return;
   if (!force && Date.now() - lastPollMs < POLL_MS) return;
   lastPollMs = Date.now();
   polls += 1;
   try {
-    const response = await fetch(`${RT_BASE}?feed=${FEED}`, RT_KEY ? { headers: { 'X-Bus-Key': RT_KEY } } : undefined);
+    const response = await api(`/rt?key=${encodeURIComponent(stopEntry.key)}`);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     snapshot = (await response.json()) as RtSnapshot;
     rtError = null;
   } catch (error) {
     rtError = `RT取得失敗 ${String(error).slice(0, 20)}`;
+  }
+}
+
+function api(path: string): Promise<Response> {
+  return fetch(`${API_BASE}${path}`, API_KEY ? { headers: { 'X-Bus-Key': API_KEY } } : undefined);
+}
+
+/** 停留所の時刻表を中継から取る（その日に走る便だけ）。 */
+async function loadStop(entry: StopIndexEntry): Promise<void> {
+  if (!API_BASE) {
+    stopError = '中継が未設定です';
+    return;
+  }
+  stopError = null;
+  try {
+    const response = await api(`/stop?key=${encodeURIComponent(entry.key)}`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = (await response.json()) as StopData;
+    if (stopEntry?.key !== entry.key) return; // 取っている間に別の停留所が選ばれた
+    stop = data;
+    stopDay = jstDay(Date.now()).ymd;
+  } catch (error) {
+    stopError = `時刻表の取得に失敗 ${String(error).slice(0, 20)}`;
   }
 }
 
@@ -135,7 +170,8 @@ function refreshBoard(): void {
 /** バスの位置の説明。根拠（待機・RT・推定・時刻表のみ）が分かるようにする。 */
 function busText(e: BoardEntry): string {
   if (!e.bus) return '車両未確認 時刻表の予定';
-  if (e.bus.waiting) return '乗り場で待機中';
+  // inbound で止まっているのは、着く便の終点（降車場のこともある）。まだ乗り場にはいない。
+  if (e.bus.waiting) return e.basis === 'inbound' ? '到着済み 折返し推定' : '乗り場で待機中';
   const where = e.bus.stopsAway > 0 ? `${formatMeters(e.bus.remainingM)}・${e.bus.stopsAway}停前` : `乗り場まで${formatMeters(e.bus.remainingM)}`;
   return e.basis === 'inbound' ? `${where} 推定` : `${where} 接近中`;
 }
@@ -162,11 +198,11 @@ function labelLines(e: BoardEntry, focus: boolean): string[] {
  */
 function mainText(): string {
   const nowMs = Date.now();
-  const age = snapshot ? `更新${formatAge(nowMs / 1000 - snapshot.feedTs)}` : RT_BASE ? 'RT取得中' : 'RTなし';
+  const age = snapshot ? `更新${formatAge(nowMs / 1000 - snapshot.feedTs)}` : API_BASE ? 'RT取得中' : 'RTなし';
   const status = rtError ?? age;
   const look = `右${Math.round(lookRightDeg)}°`;
   const e = board[focusIndex];
-  if (!stop || !choice) return '';
+  if (!stop || !choice) return [stopEntry?.name ?? '', stopError ?? '時刻表を取得中…'].join('\n');
   if (!e) return [`${stop.stop.name} ${choice.label}`, '3時間以内の発車はありません', `${status} ${look}`].join('\n');
   const d = e.scheduled.dep;
   const next = board[focusIndex + 1];
@@ -184,14 +220,16 @@ function listText(title: string, items: string[]): string {
   return [title, ...shown].join('\n');
 }
 
+function nearby() {
+  return nearbyStops(INDEX.stops, location ?? FALLBACK_LOCATION, NEARBY_LIMIT);
+}
+
 function stopItems(): string[] {
-  return nearbyStops(STOPS, location).map(({ data, distanceM }) =>
-    Number.isFinite(distanceM) ? `${data.stop.name} ${formatMeters(distanceM)}` : data.stop.name,
-  );
+  return nearby().map(({ entry, distanceM }) => `${entry.name} ${formatMeters(distanceM)} ${entry.routes.slice(0, 3).join(' ')}`);
 }
 
 function aboutText(): string {
-  const source = stop?.source ?? STOPS[0]!.source;
+  const source = stop?.source ?? Object.values(INDEX.sources)[0]!;
   return [
     'データについて（タップで戻る）',
     '公共交通オープンデータセンター提供',
@@ -207,7 +245,8 @@ function aboutText(): string {
 function diagText(): string {
   return [
     'DIAG  2tap:戻る',
-    `RT ${RT_BASE || '-'} 回${polls} ${rtError ?? 'ok'}`,
+    `API ${API_BASE || '-'} 回${polls} ${rtError ?? stopError ?? 'ok'}`,
+    `停留所 ${stopEntry?.key ?? '-'} 時刻表${stop ? `${stop.departures.length}便 ${stopDay}` : '-'}`,
     snapshot ? `feed ${formatAge(Date.now() / 1000 - snapshot.feedTs)} 車両${snapshot.vehicles.length} 便${snapshot.tripUpdates.length}` : 'feed -',
     `位置 ${location ? `${location.lat.toFixed(4)},${location.lng.toFixed(4)}` : '-'}`,
     `送信 ${sender.stats()}ms 済${sender.sent} 同${sender.skipped} 捨${sender.dropped} 描${Math.round(renderMs)}ms`,
@@ -218,9 +257,10 @@ function diagText(): string {
 function infoText(): string {
   switch (page) {
     case 'stops':
-      return listText('バス停を選ぶ（スワイプ・タップ）', stopItems());
+      return listText(`バス停を選ぶ${location ? '' : '（仮:川崎駅）'}`, stopItems());
     case 'platforms':
-      return listText(`${stop?.stop.name ?? ''} 乗り場を選ぶ`, stop ? platformChoices(stop).map((c) => c.label) : []);
+      if (!stop) return [stopEntry?.name ?? '', stopError ?? '時刻表を取得中…', '', 'ダブルタップで戻る'].join('\n');
+      return listText(`${stop.stop.name} 乗り場を選ぶ`, platformChoices(stop).map((c) => c.label));
     case 'about':
       return aboutText();
     case 'diag':
@@ -364,8 +404,8 @@ async function switchPage(next: Page): Promise<void> {
 }
 
 async function openMain(): Promise<void> {
-  if (!stop || !choice) return;
-  void saveSelection({ stopId: stop.stop.id, choiceId: choice.id, lookRightDeg }, host);
+  if (!stopEntry || !choice) return;
+  void saveSelection({ stopId: stopEntry.key, choiceId: choice.id, lookRightDeg }, host);
   await poll(true);
   await switchPage('main');
 }
@@ -376,7 +416,7 @@ async function handleMenu(id: number): Promise<void> {
   switch (id) {
     case MENU.platform:
       cursor = 0;
-      await switchPage(stop ? 'platforms' : 'stops');
+      await switchPage(stopEntry ? 'platforms' : 'stops');
       return;
     case MENU.stop:
       cursor = 0;
@@ -411,9 +451,9 @@ async function handleMenu(id: number): Promise<void> {
 async function onSwipe(direction: 1 | -1): Promise<void> {
   if (page === 'main') {
     lookRightDeg += direction * STEPS[stepIndex]!;
-    if (stop && choice) void saveSelection({ stopId: stop.stop.id, choiceId: choice.id, lookRightDeg }, host);
+    if (stopEntry && choice) void saveSelection({ stopId: stopEntry.key, choiceId: choice.id, lookRightDeg }, host);
   } else if (page === 'stops' || page === 'platforms') {
-    const count = page === 'stops' ? STOPS.length : stop ? platformChoices(stop).length : 0;
+    const count = page === 'stops' ? nearby().length : stop ? platformChoices(stop).length : 0;
     if (count > 0) cursor = (cursor + direction + count) % count;
   } else {
     return;
@@ -424,9 +464,15 @@ async function onSwipe(direction: 1 | -1): Promise<void> {
 async function onTap(): Promise<void> {
   switch (page) {
     case 'stops': {
-      stop = nearbyStops(STOPS, location)[cursor]?.data ?? null;
+      stopEntry = nearby()[cursor]?.entry ?? null;
+      stop = null;
+      snapshot = null;
       cursor = 0;
       await switchPage('platforms');
+      if (stopEntry) {
+        await loadStop(stopEntry);
+        await render();
+      }
       return;
     }
     case 'platforms': {
@@ -454,7 +500,7 @@ async function onDoubleTap(): Promise<void> {
       return;
     case 'about':
     case 'diag':
-      await switchPage(stop && choice ? 'main' : 'stops');
+      await switchPage(stopEntry && stop && choice ? 'main' : 'stops');
       return;
     default:
       // ルート画面のダブルタップは終了確認を出す（出さないと審査で落ちる。G2 Sky View と同じ）。
@@ -490,6 +536,7 @@ function wireBrowserControls(): void {
         case 'next': void onSwipe(1); break;
         case 'tap': void onTap(); break;
         case 'dtap': void onDoubleTap(); break;
+        case 'stop': void handleMenu(MENU.stop); break;
         case 'platform': void handleMenu(MENU.platform); break;
         case 'reset': void handleMenu(MENU.reset); break;
         case 'about': void handleMenu(MENU.about); break;
@@ -511,13 +558,15 @@ function wireBrowserControls(): void {
 async function resume(): Promise<boolean> {
   const saved = await loadSelection(host);
   if (!saved) return false;
-  const savedStop = STOPS.find((s) => s.stop.id === saved.stopId);
-  const savedChoice = savedStop ? platformChoices(savedStop).find((c) => c.id === saved.choiceId) : undefined;
-  if (!savedStop || !savedChoice) return false;
-  stop = savedStop;
-  choice = savedChoice;
+  // 0.1.0 は停留所 ID だけ（大師橋駅前の '5010'）を保存していた。
+  const key = saved.stopId.includes(':') ? saved.stopId : `rinko:${saved.stopId}`;
+  const entry = INDEX.stops.find((s) => s.key === key);
+  if (!entry) return false;
+  stopEntry = entry;
   lookRightDeg = saved.lookRightDeg;
-  return true;
+  await loadStop(entry);
+  choice = stop ? (platformChoices(stop).find((c) => c.id === saved.choiceId) ?? null) : null;
+  return choice !== null;
 }
 
 async function main(): Promise<void> {
@@ -549,6 +598,8 @@ async function main(): Promise<void> {
   // カウントダウンは分単位なので 5 秒ごとに描き直せば足りる。画像は変わったときだけ送られる。
   setInterval(() => {
     void (async () => {
+      // 時刻表はその日に走る便だけなので、日付が変わったら取り直す。
+      if (stopEntry && stop && jstDay(Date.now()).ymd !== stopDay) await loadStop(stopEntry);
       if (page === 'main') await poll();
       await render();
     })();

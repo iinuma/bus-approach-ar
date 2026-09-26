@@ -3,6 +3,7 @@
  */
 
 import { CfnOutput, Duration, RemovalPolicy, Stack, type StackProps } from 'aws-cdk-lib';
+import { BlockPublicAccess, Bucket, BucketEncryption } from 'aws-cdk-lib/aws-s3';
 import { FunctionUrlAuthType, Runtime } from 'aws-cdk-lib/aws-lambda';
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
@@ -29,6 +30,16 @@ export class KawasakiBusProxyStack extends Stack {
       removalPolicy: RemovalPolicy.DESTROY,
     });
 
+    // 停留所データ（時刻表の切り出し）。ライセンス上、公開しない。中継だけが読む。
+    // 作り直せるデータなので、スタックを消したら一緒に消す。
+    const stops = new Bucket(this, 'Stops', {
+      blockPublicAccess: BlockPublicAccess.BLOCK_ALL,
+      encryption: BucketEncryption.S3_MANAGED,
+      enforceSSL: true,
+      removalPolicy: RemovalPolicy.DESTROY,
+      autoDeleteObjects: true,
+    });
+
     const fn = new NodejsFunction(this, 'RtProxy', {
       entry: resolve(here, '../src/lambda.ts'),
       handler: 'handler',
@@ -37,7 +48,7 @@ export class KawasakiBusProxyStack extends Stack {
       timeout: Duration.seconds(15),
       // 同時実行の予約はしない（G2 Sky View と同じ。予約するとデプロイが落ちることがある）。
       logGroup,
-      environment: { APP_KEY: props.appKey, ODPT_TOKEN_PARAM: props.tokenParameterName },
+      environment: { APP_KEY: props.appKey, ODPT_TOKEN_PARAM: props.tokenParameterName, STOPS_BUCKET: stops.bucketName },
       bundling: {
         minify: true,
         sourceMap: false,
@@ -46,11 +57,17 @@ export class KawasakiBusProxyStack extends Stack {
       },
     });
 
+    stops.grantRead(fn);
     StringParameter.fromSecureStringParameterAttributes(this, 'OdptToken', { parameterName: props.tokenParameterName }).grantRead(fn);
 
     const url = fn.addFunctionUrl({
       authType: FunctionUrlAuthType.NONE,
       // CORS は Function URL 側では設定しない（ハンドラと重なって WebView の fetch が落ちる）。
+    });
+
+    new CfnOutput(this, 'StopsBucket', {
+      value: stops.bucketName,
+      description: 'npm run stops:upload の置き先',
     });
 
     new CfnOutput(this, 'ProxyUrl', {

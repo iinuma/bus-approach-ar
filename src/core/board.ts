@@ -42,6 +42,12 @@ export interface BoardEntry {
   bus: BusPosition | null;
 }
 
+/**
+ * これより古い車両位置は使わない。川崎市バスのフィードには 8 時間前の位置が混ざっていた
+ * （2026-09-27 実測。通常は 30〜130 秒前）。
+ */
+export const STALE_VEHICLE_S = 300;
+
 /** 折り返しに最低限かかる時間。到着見込みにこれを足したものより早くは出ない、とみなす。 */
 const MIN_LAYOVER_MS = 60_000;
 
@@ -53,8 +59,9 @@ export function buildBoard(
 ): BoardEntry[] {
   const limit = options.limit ?? 6;
   const scheduled = upcomingDepartures(data, nowMs, { platforms: options.platforms, graceMs: 5 * 60_000 });
-  const rt = snapshot ? indexSnapshot(snapshot) : null;
-  const inbound = snapshot ? inboundBuses(data, snapshot, nowMs) : [];
+  const fresh = snapshot ? withoutStale(snapshot, nowMs) : null;
+  const rt = fresh ? indexSnapshot(fresh) : null;
+  const inbound = fresh ? inboundBuses(data, fresh, nowMs) : [];
   const usedVehicles = new Set<string>();
   const out: BoardEntry[] = [];
 
@@ -70,7 +77,10 @@ export function buildBoard(
       out.push({ scheduled: s, expectedMs: Math.max(expectedMs, s.atMs), basis: 'realtime', bus: positionAtPlatform(data, s.dep.platform, vehicle) });
     } else {
       if (s.atMs < nowMs) continue; // 予定を過ぎて RT にも無い便は出たものとみなす
-      const candidate = inbound.find((b) => !usedVehicles.has(b.bus.vehicle.vehicle) && b.arrival.platform === s.dep.platform && b.arrival.route === s.dep.route);
+      // 同じ乗り場に着く車両を優先し、無ければ同じ停留所の別の乗り場（降車場）に着く同じ系統の車両。
+      // 川崎市バスの川崎駅は降車場（94_2）と乗り場が分かれている（2026-09-27 データで確認）。
+      const free = inbound.filter((b) => !usedVehicles.has(b.bus.vehicle.vehicle) && b.arrival.route === s.dep.route);
+      const candidate = free.find((b) => b.arrival.platform === s.dep.platform) ?? free[0];
       if (candidate && candidate.arrivalMs <= s.atMs + 30 * 60_000) {
         usedVehicles.add(candidate.bus.vehicle.vehicle);
         out.push({ scheduled: s, expectedMs: Math.max(s.atMs, candidate.arrivalMs + MIN_LAYOVER_MS), basis: 'inbound', bus: candidate.bus });
@@ -81,6 +91,12 @@ export function buildBoard(
     if (out.length >= limit) break;
   }
   return out;
+}
+
+/** 古い車両位置を捨てる。 */
+export function withoutStale(snapshot: RtSnapshot, nowMs: number): RtSnapshot {
+  const limit = nowMs / 1000 - STALE_VEHICLE_S;
+  return { ...snapshot, vehicles: snapshot.vehicles.filter((v) => v.ts >= limit) };
 }
 
 interface InboundBus {

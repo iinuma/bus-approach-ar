@@ -2,7 +2,8 @@ import { defineConfig, loadEnv, type Plugin } from 'vite';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import daishibashi from '../data/stops/daishibashi.json';
+import { readFile } from 'node:fs/promises';
+
 import { fetchSnapshot } from '../proxy/src/odpt-rt.js';
 import { createRtProxy } from '../proxy/src/rt-proxy.js';
 import type { StopData } from '../src/core/stopdata.js';
@@ -18,21 +19,28 @@ const projectRoot = resolve(here, '..');
 const lanIp = process.env.LAN_IP;
 
 /**
- * dev サーバーに ODPT の中継を載せる。本番の Lambda と同じ関数（proxy/src/rt-proxy.ts）で、
- * 絞り込み・キャッシュも同じ。ODPT のトークンはサーバー側（.env）にだけ置く。
- * dev では共有鍵を確かめない（LAN 内だけに出ている）。
+ * dev サーバーに ODPT の中継を載せる（/api/stop, /api/rt）。本番の Lambda と同じ関数
+ * （proxy/src/rt-proxy.ts）で、停留所データは S3 の代わりにローカルの data/stops/ から読む。
+ * ODPT のトークンはサーバー側（.env）にだけ置く。dev では共有鍵を確かめない（LAN 内だけに出ている）。
  */
 function rtDevProxy(token: string): Plugin {
-  const handle = createRtProxy({ fetchSnapshot: (feed) => fetchSnapshot(feed, token), stops: [daishibashi as StopData] });
+  const handle = createRtProxy({
+    fetchSnapshot: (feed) => fetchSnapshot(feed, token),
+    loadStop: async (feed, id) =>
+      readFile(resolve(projectRoot, `data/stops/${feed}/${id}.json`), 'utf8').then(
+        (text) => JSON.parse(text) as StopData,
+        () => null,
+      ),
+  });
   return {
     name: 'rt-dev-proxy',
     configureServer(server) {
-      server.middlewares.use('/api/rt', (req, res) => {
+      server.middlewares.use('/api', (req, res) => {
         const url = new URL(req.url ?? '/', 'http://localhost');
         void handle({ method: req.method ?? 'GET', path: url.pathname, query: Object.fromEntries(url.searchParams), headers: {} }).then(
           (response) => {
             res.writeHead(response.status, response.headers);
-            res.end(response.body);
+            res.end(response.base64 ? Buffer.from(response.body, 'base64') : response.body);
           },
         );
       });

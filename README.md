@@ -3,6 +3,10 @@
 公共交通オープンデータチャレンジ2026 向け。Even G2 で、選んだバス停・乗り場の次の便
 （系統・行先・カウントダウン）と、接近してくるバスの位置を出す。iOS 版（AR）はあとで。
 
+**対応範囲: 川崎市バス 477 停留所・川崎鶴見臨港バス 394 停留所（全停留所）。**
+アプリに同梱するのは停留所の索引（123KB）だけで、時刻表は選んだ停留所の「その日のぶん」を
+中継から取る（全停留所で 263MB、1 日ぶんに切り出して gzip すると最大 20KB 程度）。
+
 企画は Notion の
 [公共交通オープンデータチャレンジ2026 — 川崎バス接近AR／Even 構想メモ](https://app.notion.com/p/3e71b0c05d9b81c5a99ad02ff3922106)。
 G2 の画面構成・送信・入力の扱いは `~/Developer/G2SkyView` から、選択の記憶は
@@ -84,11 +88,12 @@ G2 の画面構成・送信・入力の扱いは `~/Developer/G2SkyView` から�
 npm install
 cp .env.example .env    # ODPT_TOKEN を書く（Tokyojihatsu と同じもの）
 # 静的 GTFS を data/raw/ に取得・展開してから（URL は ckan.odpt.org の各データセット）
-npm run build:stop      # data/stops/daishibashi.json を生成（56KB, アプリに同梱）
+npm run build:all       # data/stops/<feed>/<id>.json（871 停留所）と data/stops/index.json を生成（約 5 秒）
 npm test                # ネットワーク不要
 npm run typecheck
-npm run board           # 今の発車案内（RT 込み）
-npm run board -- --at 2026-09-28T07:30 --platform 1   # 時刻を指定（時刻表のみ）
+npm run board -- --stop rinko:5010                      # 今の発車案内（RT 込み）
+npm run board -- --stop kawasaki_city:94                # 川崎駅（市バス）
+npm run board -- --at 2026-09-28T07:30 --platform 1     # 時刻を指定（時刻表のみ）
 npm run rt:audit -- rinko --save                        # RT の監査・保存
 ```
 
@@ -106,6 +111,7 @@ npm run app:qr      # 実機に読ませる QR
 ```bash
 aws sts get-caller-identity    # 個人アカウント 473259746493 であることを確かめてから
 npm run proxy:deploy           # 中継をデプロイし、URL を .env.production.local に書く
+npm run build:all && npm run stops:upload   # 停留所データを中継の S3 に置く（ダイヤ改正時もこれ）
 npm run app:pack               # dist/bus-approach-ar.ehpk（中継の URL と共有鍵が入る）
 ```
 
@@ -116,8 +122,16 @@ npm run app:pack               # dist/bus-approach-ar.ehpk（中継の URL と�
 
 ## 中継（proxy/）
 
-Lambda Function URL 1 本（`KawasakiBusProxyStack`, 個人アカウント・東京リージョン）。
-中身は `proxy/src/rt-proxy.ts` で、dev サーバーも同じ関数を通る。
+Lambda Function URL 1 本と非公開の S3 バケット（`KawasakiBusProxyStack`, 個人アカウント・東京リージョン）。
+中身は `proxy/src/rt-proxy.ts` で、dev サーバーも同じ関数を通る（停留所データは S3 の代わりにローカルから読む）。
+
+| 経路 | 返すもの |
+|---|---|
+| `/stop?key=rinko:5010` | 停留所の時刻表。**その日に走る便だけ**（前日の 24 時超え・翌日の早朝を含む）、gzip |
+| `/rt?key=rinko:5010` | その停留所・その日の便に関係する車両位置・予測 |
+| `/?feed=rinko` | 0.1.0（大師橋駅前だけのベータ）との互換 |
+
+停留所データは S3 から読み、Lambda の中で 1 時間持つ（置き直しは 1 時間以内に効く）。
 
 - **ODPT のトークン**は SSM の SecureString（Tokyojihatsu の `/tokyojihatsu/odpt-token` を共用）から
   実行時に読む。テンプレートにも `.ehpk` にも入らない（ビルド結果を検索して確認済み）。
@@ -151,11 +165,23 @@ scripts/board-cli.ts   発車案内の CLI
 scripts/rt-audit.ts    RT の監査
 ```
 
+## 全展開で見つかった課題（2026-09-27）
+
+- **両社で停留所名が違う。** 川崎駅東口は臨港「川崎駅前」（乗り場 16）と市バス「川崎駅」（9）。
+  同名の停留所（90 か所）だけをまとめると、一番大事な駅を取りこぼす。今は一覧に別々に並ぶ。
+- **市バスは platform_code が空。** stop_id の末尾（`94_11` など）は乗り場番号でも系統番号でもない。
+  乗り場は「系統・行先」で選ばせている。座標も 10〜80m ずれるので、座標だけで両社の乗り場を対応づけられない。
+- **降車場と乗り場が別の停留所がある**（市バス川崎駅の `94_2`）。折り返しの推定は、同じ乗り場が無ければ
+  同じ停留所の別の乗り場に着く同じ系統の車両で結ぶ。止まっているときは「到着済み」と出す。
+- **市バスのフィードに古い位置が混ざる**（最大 8 時間前）。5 分より古い位置は使わない。
+- 共同運行らしい系統がある（市バスの行先「川崎駅（臨港バス）」）。
+
 ## 未着手・次にやること
 
 - [ ] 実機（G2）で見る: 帯の見え方、スワイプで回す感覚、画角 30° が合っているか
 - [ ] ベータで大師橋駅前に行き、ロック中・Mac なしで表示が続くか確かめる
 - [ ] 折り返し推定の当たり外れを実測する（推定した車両が実際にその便で出たか）
 - [ ] 表示した見込みと実際の発車の差を記録する
-- [ ] 川崎市バスの停留所を足す（`build-stop` と FEED の切り替え）
+- [ ] 両社の停留所をまとめる（下の「全展開で見つかった課題」）
+- [ ] GTFS の更新を自動で拾う（今は手で取得 → build:all → stops:upload）
 - [ ] iOS 版（AR）

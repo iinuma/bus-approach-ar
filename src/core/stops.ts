@@ -7,6 +7,7 @@
 
 import { LocalSphere, type LatLng } from './geodesy.js';
 import type { StopData } from './stopdata.js';
+import type { StopIndexEntry } from './stopindex.js';
 
 export interface PlatformChoice {
   id: string;
@@ -16,7 +17,9 @@ export interface PlatformChoice {
 }
 
 export function platformChoices(data: StopData): PlatformChoice[] {
-  const choices: PlatformChoice[] = data.platforms.map((p) => {
+  // 発車の無い標柱（降車専用）は、乗る人が選ぶ意味がないので出さない。
+  const boarding = data.platforms.filter((p) => data.departures.some((d) => d.platform === p.id));
+  const choices: PlatformChoice[] = boarding.map((p) => {
     // 系統ごとに最頻の行先を出す（同じ系統で行先が 1 つとは限らない）。
     const byRoute = new Map<string, Map<string, number>>();
     for (const d of data.departures) {
@@ -29,22 +32,24 @@ export function platformChoices(data: StopData): PlatformChoice[] {
       const headsign = [...counts].sort((a, b) => b[1] - a[1])[0]![0];
       return `${route} ${headsign}`;
     });
-    return { id: p.id, label: `${p.code}番 ${parts.join(' / ') || '発車なし'}`, platforms: new Set([p.id]) };
+    // 川崎市バスは platform_code が空（乗り場番号がデータに無い）。そのときは系統・行先だけで示す。
+    const prefix = p.code ? `${p.code}番 ` : '';
+    return { id: p.id, label: `${prefix}${parts.join(' / ')}`, platforms: new Set([p.id]) };
   });
-  choices.push({ id: 'all', label: '全乗り場', platforms: new Set(data.platforms.map((p) => p.id)) });
+  if (choices.length > 1) choices.push({ id: 'all', label: '全乗り場', platforms: new Set(boarding.map((p) => p.id)) });
   return choices;
 }
 
 export interface NearbyStop {
-  data: StopData;
+  entry: StopIndexEntry;
   distanceM: number;
 }
 
-/** 近い順。現在地が無ければ入っている順。 */
-export function nearbyStops(stops: StopData[], location: LatLng | null): NearbyStop[] {
-  if (!location) return stops.map((data) => ({ data, distanceM: Number.NaN }));
+/** 近い順に limit 件。 */
+export function nearbyStops(stops: StopIndexEntry[], location: LatLng, limit = 20): NearbyStop[] {
   const here = new LocalSphere(location);
   return stops
-    .map((data) => ({ data, distanceM: here.inverse(data.stop).distanceM }))
-    .sort((a, b) => a.distanceM - b.distanceM);
+    .map((entry) => ({ entry, distanceM: here.inverse(entry).distanceM }))
+    .sort((a, b) => a.distanceM - b.distanceM)
+    .slice(0, limit);
 }

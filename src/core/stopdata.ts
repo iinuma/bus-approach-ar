@@ -6,6 +6,8 @@
  */
 
 export interface StopData {
+  /** GTFS-RT のフィード名（proxy/src/odpt-rt.ts の FEEDS のキー）。 */
+  feed: string;
   source: { agency: string; feedVersion: string; fetchedDate: string };
   stop: { id: string; name: string; lat: number; lng: number };
   platforms: Platform[];

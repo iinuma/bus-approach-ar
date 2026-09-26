@@ -3,7 +3,6 @@
   "version": "0.1.0",
   "description": "公共交通オープンデータチャレンジ2026 — バス接近AR（Even G2）",
   "scripts": {
-    "build:stop": "tsx scripts/build-stop.ts rinko 5010 daishibashi",
     "board": "tsx scripts/board-cli.ts",
     "rt:audit": "tsx scripts/rt-audit.ts",
     "typecheck": "tsc --noEmit",
@@ -13,13 +12,16 @@
     "app:qr": "evenhub qr --url \"http://$(./scripts/lan-ip.sh):5179\"",
     "app:pack": "npm run app:build && evenhub pack app/app.json dist/app -o dist/bus-approach-ar.ehpk --sdk-ver 0.0.15",
     "proxy:synth": "npx cdk synth KawasakiBusProxyStack -c appKey=synth-check --quiet",
-    "proxy:deploy": "./scripts/deploy-proxy.sh"
+    "proxy:deploy": "./scripts/deploy-proxy.sh",
+    "build:all": "NODE_OPTIONS=--max-old-space-size=6144 tsx scripts/build-all.ts",
+    "stops:upload": "./scripts/upload-stops.sh"
   },
   "type": "module",
   "dependencies": {
     "gtfs-realtime-bindings": "^2.2.0"
   },
   "devDependencies": {
+    "@aws-sdk/client-s3": "^3.1141.0",
     "@aws-sdk/client-ssm": "^3.1141.0",
     "@evenrealities/even_hub_sdk": "^0.0.15",
     "@evenrealities/evenhub-cli": "^0.1.14",

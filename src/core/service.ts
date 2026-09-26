@@ -79,3 +79,31 @@ export function clock(epochMs: number): string {
   const d = new Date(epochMs + JST_OFFSET_MS);
   return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
 }
+
+/**
+ * その日に走る便だけに切り出す（中継が停留所データを配るときに使う）。
+ *
+ * 当日の運行は全部、前日の運行は 24 時を超える便（0 時台の終バス）だけ、翌日の運行は
+ * 早朝の便だけを残す。日付が変わったらアプリが取り直す（app/src/main.ts）。
+ * 全曜日ぶんだと大きい停留所で 2MB を超えるが、1 日ぶんなら数分の 1 になる。
+ */
+export function sliceForDay(data: StopData, epochMs: number): StopData {
+  const today = jstDay(epochMs);
+  const todayIds = activeServices(data, today);
+  const yesterdayIds = activeServices(data, jstDay(today.midnightMs - DAY_MS));
+  const tomorrowIds = activeServices(data, jstDay(today.midnightMs + DAY_MS));
+  const keep = (service: string, t: number) =>
+    todayIds.has(service) || (yesterdayIds.has(service) && t >= 24 * 3600) || (tomorrowIds.has(service) && t < EARLY_MORNING_S);
+  const departures = data.departures.filter((d) => keep(d.service, d.t));
+  const arrivals = data.arrivals.filter((a) => keep(a.service, a.t));
+  const used = new Set([...departures.map((d) => d.service), ...arrivals.map((a) => a.service)]);
+  return {
+    ...data,
+    services: Object.fromEntries(Object.entries(data.services).filter(([id]) => used.has(id))),
+    departures,
+    arrivals,
+  };
+}
+
+/** 翌日の運行から残す範囲。発車案内は 3 時間先まで見るので、23 時台に翌朝の始発が要る。 */
+const EARLY_MORNING_S = 6 * 3600;

@@ -269,6 +269,8 @@ function infoText(): string {
       return listText(`バス停を選ぶ${location ? '' : '（仮:川崎駅）'}`, stopItems());
     case 'platforms':
       if (!stop) return [stopEntry?.name ?? '', stopError ?? '時刻表を取得中…', '', 'ダブルタップで戻る'].join('\n');
+      // 曜日によって便の無いバス停がある（砂子一丁目は日曜に 0 本）。
+      if (platformChoices(stop).length === 0) return [stop.stop.name, '今日はこのバス停から出る便がありません', '', 'ダブルタップで戻る'].join('\n');
       return listText(`${stop.stop.name} 乗り場を選ぶ`, platformChoices(stop).map((c) => c.label));
     case 'about':
       return aboutText();

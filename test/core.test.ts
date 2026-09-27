@@ -36,7 +36,7 @@ test('終点で着く便は発車便に数えない', () => {
 test('乗り場の選択肢に系統と行先が出る', () => {
   const labels = platformChoices(data).map((c) => c.label);
   assert.ok(labels.some((l) => l.startsWith('1番 大01 浮島バスターミナル')));
-  assert.equal(labels.at(-1), '全乗り場');
+  assert.equal(labels[0], '全乗り場');
 });
 
 const P3 = data.platforms.find((p) => p.code === '3')!.id;

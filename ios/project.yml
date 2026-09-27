@@ -1,0 +1,60 @@
+# XcodeGen の定義。プロジェクトはここから生成する（BusApproachAR.xcodeproj は git に入れない）。
+#   cd ios && ./scripts/bootstrap.sh
+name: BusApproachAR
+options:
+  bundleIdPrefix: com.masahiroiinuma
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    DEVELOPMENT_TEAM: V53N86QT52
+    SWIFT_VERSION: "6.0"
+    SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  BusApproachAR:
+    type: application
+    platform: iOS
+    sources:
+      - path: BusApproachAR
+      # 停留所の索引（../data/stops/index.json, npm run build:all で生成）。時刻表は中継から取る。
+      # XcodeGen にターゲットの resources という指定は無いので、sources に buildPhase で入れる。
+      - path: ../data/stops/index.json
+        buildPhase: resources
+    configFiles:
+      Debug: Config/App.xcconfig
+      Release: Config/App.xcconfig
+    info:
+      path: BusApproachAR/Info.plist
+      properties:
+        CFBundleDisplayName: バス接近AR
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        NSCameraUsageDescription: カメラ映像の上に、接近してくるバスの方向を重ねて表示するために使います。
+        NSLocationWhenInUseUsageDescription: 近くのバス停を探し、バスの方向を計算するために使います。位置情報を外部に送信することはありません。
+        ITSAppUsesNonExemptEncryption: false
+        API_BASE: $(API_BASE)
+        API_KEY: $(API_KEY)
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.masahiroiinuma.busapproachar
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: NO
+  BusApproachARTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: BusApproachARTests
+        excludes: [Fixtures]
+      # TypeScript 版で作った入力と正解（scripts/golden.sh で生成、git に入れない）
+      - path: BusApproachARTests/Fixtures
+        type: folder
+        buildPhase: resources
+    dependencies:
+      - target: BusApproachAR
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.masahiroiinuma.busapproachar.tests

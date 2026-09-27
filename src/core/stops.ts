@@ -40,7 +40,8 @@ export function platformChoices(data: StopData): PlatformChoice[] {
     const prefix = `${p.operator ? `${p.operator} ` : ''}${p.code ? `${p.code}番 ` : ''}`;
     return { id: p.id, label: `${prefix}${parts.join(' / ')}`, platforms: new Set([p.id]) };
   });
-  if (choices.length > 1) choices.push({ id: 'all', label: '全乗り場', platforms: new Set(boarding.map((p) => p.id)) });
+  // 全乗り場は先頭に置く。川崎駅は 25 乗り場あり、末尾だとスクロールしないと選べない。
+  if (choices.length > 1) choices.unshift({ id: 'all', label: '全乗り場', platforms: new Set(boarding.map((p) => p.id)) });
   return choices;
 }
 

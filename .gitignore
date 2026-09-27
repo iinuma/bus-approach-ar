@@ -8,3 +8,7 @@ scratch/
 cdk.out/
 .env.production.local
 data/stops/
+ios/BusApproachAR.xcodeproj/
+ios/Config/Secrets.xcconfig
+ios/BusApproachARTests/Fixtures/
+ios/build/

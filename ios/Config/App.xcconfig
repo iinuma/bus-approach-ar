@@ -1,0 +1,6 @@
+// 中継の URL と共有鍵は Secrets.xcconfig（git に入れない, scripts/bootstrap.sh が
+// ../.env.production.local から作る）で渡す。共有鍵は G2 版と同じで秘密ではないが、
+// G2 版と同じく git には入れない。
+API_BASE =
+API_KEY =
+#include? "Secrets.xcconfig"

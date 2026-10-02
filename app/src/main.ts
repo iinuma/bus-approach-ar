@@ -37,7 +37,7 @@ import {
 import { buildApproachScene, DEFAULT_APPROACH_LAYOUT, MODEL_LOOK_RIGHT_DEG, type ApproachScene } from '../../src/core/approach.js';
 import { Bitmap } from '../../src/core/bitmap.js';
 import { buildBoard, type BoardEntry } from '../../src/core/board.js';
-import { formatAge, formatCountdown, formatMeters } from '../../src/core/format.js';
+import { formatAge, formatCountdown, formatMeters, versionText } from '../../src/core/format.js';
 import type { LatLng } from '../../src/core/geodesy.js';
 import type { RtSnapshot } from '../../src/core/realtime.js';
 import { renderApproach, splitHalves } from '../../src/core/render.js';
@@ -243,7 +243,7 @@ function aboutText(): string {
     'データについて（タップで戻る）',
     '公共交通オープンデータセンター提供',
     source.agency,
-    `時刻表 ${source.feedVersion.slice(0, 8)}版 取得${source.fetchedDate}`,
+    `時刻表 ${versionText(source.feedVersion)}版 取得${source.fetchedDate}`,
     'データの正確性・完全性は保証されません',
     '道路は右60°に置いた模式図です',
     '問い合わせ:',
@@ -589,7 +589,15 @@ async function main(): Promise<void> {
     host = { get: (key) => bridge!.getLocalStorage(key), set: (key, value) => bridge!.setLocalStorage(key, value) };
   }
 
-  const resumed = await resume();
+  // ブラウザ・シミュレータには位置情報が無いので、?lat=&lng= で現在地を渡せる（G2 Sky View と同じ）。
+  // 審査用のスクリーンショットを、実際の利用場面（川崎駅の近く）で撮るため。
+  const params = new URLSearchParams(globalThis.location?.search ?? '');
+  const urlLat = Number(params.get('lat'));
+  const urlLng = Number(params.get('lng'));
+  const fromUrl = Number.isFinite(urlLat) && Number.isFinite(urlLng) && urlLat !== 0 && urlLng !== 0;
+  if (fromUrl) location = { lat: urlLat, lng: urlLng };
+
+  const resumed = params.get('fresh') === '1' ? false : await resume();
   if (resumed) {
     page = 'main';
     await poll(true);
@@ -598,11 +606,13 @@ async function main(): Promise<void> {
     const result = await bridge.createStartUpPageContainer(new CreateStartUpPageContainer(containersFor(page)));
     if (result !== StartUpPageCreateResult.success) console.warn('page create', StartUpPageCreateResult[result] ?? result);
     bridge.onEvenHubEvent((event) => void handleEvent(event));
-    try {
-      const fix = await bridge.getAppLocation({ accuracy: AppLocationAccuracy.High, timeoutMs: 10_000 });
-      if (fix) location = { lat: fix.latitude, lng: fix.longitude };
-    } catch (error) {
-      console.warn('location failed', error);
+    if (!fromUrl) {
+      try {
+        const fix = await bridge.getAppLocation({ accuracy: AppLocationAccuracy.High, timeoutMs: 10_000 });
+        if (fix) location = { lat: fix.latitude, lng: fix.longitude };
+      } catch (error) {
+        console.warn('location failed', error);
+      }
     }
   }
   await render();

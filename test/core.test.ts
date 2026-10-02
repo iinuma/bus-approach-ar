@@ -9,6 +9,7 @@ import { activeServices, clock, jstDay, upcomingDepartures } from '../src/core/s
 import type { StopData } from '../src/core/stopdata.js';
 import { platformChoices } from '../src/core/stops.js';
 import { fitText, INFO_MAX_LINES } from '../src/core/textfit.js';
+import { versionText } from '../src/core/format.js';
 
 const data = JSON.parse(readFileSync('data/stops/rinko/5010.json', 'utf8')) as StopData;
 const jst = (s: string) => new Date(`${s}+09:00`).getTime();
@@ -122,10 +123,15 @@ test('文字欄は 3 行まで', () => {
   assert.equal(fitText('1\n2\n3\n4').split('\n').length, 3);
 });
 
+test('時刻表の版: 1 社はそのまま、まとめたバス停は両社の月日', () => {
+  assert.equal(versionText('20260716_20261231'), '20260716');
+  assert.equal(versionText('20260701/20260716'), '7/1・7/16');
+});
+
 test('「データについて」の必須表示（問い合わせ先）が切れない', async () => {
   const { visualWidth, MAX_COLUMNS } = await import('../src/core/textfit.js');
   const lines = ['データについて（タップで戻る）', '公共交通オープンデータセンター提供', data.source.agency,
-    `時刻表 ${data.source.feedVersion.slice(0, 8)}版 取得${data.source.fetchedDate}`,
+    `時刻表 ${versionText('20260701/20260716')}版 取得${data.source.fetchedDate}`,
     'データの正確性・完全性は保証されません', '道路は右60°に置いた模式図です', '問い合わせ:', 'async.sync+kawasakibus@gmail.com'];
   assert.ok(lines.length <= 8);
   for (const line of lines) assert.ok(visualWidth(line) <= MAX_COLUMNS, line);

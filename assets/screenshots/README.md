@@ -19,8 +19,14 @@ magick 03-approach.png -background black -alpha remove -alpha off view.png
 
 | ファイル | 画面 | 撮影 |
 | --- | --- | --- |
-| 01-stops.png | バス停を選ぶ | 2026-09-27 |
-| 02-platforms.png | 乗り場を選ぶ | 2026-09-27 |
-| 03-approach.png | 接近ビュー（全乗り場, 日曜 07:3x の実データ） | 2026-09-27 |
-| 04-menu.png | コンテキストメニュー | 2026-09-27 |
-| 05-about.png | データについて（ODPT の必須表示） | 2026-09-27 |
+| 01-stops.png | バス停を選ぶ（川崎駅の近く。両社まとめ「市バス・臨港」） | 2026-10-03 |
+| 02-platforms.png | 乗り場を選ぶ（全乗り場が先頭、事業者つき） | 2026-10-03 |
+| 03-approach.png | 接近ビュー（川崎駅・全乗り場、土曜 08:14 の実データ） | 2026-10-03 |
+| 04-menu.png | コンテキストメニュー | 2026-10-03 |
+| 05-about.png | データについて（ODPT の必須表示、両社の時刻表の版） | 2026-10-03 |
+
+シミュレータには位置情報が無いので、URL で現在地を渡す。前回の選択から再開させないときは `fresh=1`:
+
+```bash
+npx evenhub-simulator "http://localhost:5179/?lat=35.5306&lng=139.6986&fresh=1" --automation-port 9898
+```

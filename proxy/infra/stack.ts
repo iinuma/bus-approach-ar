@@ -46,7 +46,10 @@ export class KawasakiBusProxyStack extends Stack {
       runtime: Runtime.NODEJS_22_X,
       memorySize: 256,
       timeout: Duration.seconds(15),
-      // 同時実行の予約はしない（G2 Sky View と同じ。予約するとデプロイが落ちることがある）。
+      // 同時実行の上限。アプリに埋め込んだキーは取り出せるので、悪用されても費用と
+      // ODPT への要求数がこれ以上増えないようにする。実利用はごく少ない（2026-10-25 確認）。
+      // （アカウントの同時実行の上限は 400 なので予約できる。上限 10 の新しいアカウントでは予約できない）
+      reservedConcurrentExecutions: 2,
       logGroup,
       environment: { APP_KEY: props.appKey, ODPT_TOKEN_PARAM: props.tokenParameterName, STOPS_BUCKET: stops.bucketName },
       bundling: {
